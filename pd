@@ -4,6 +4,9 @@ from datetime import datetime
 import numpy as np
 import pandas as pd
 import argparse
+import warnings
+import logging
+warnings.simplefilter(action = "ignore")
 
 parser = argparse.ArgumentParser()
 parser.add_argument('-c', '--columns', action='store', default=None,
@@ -30,7 +33,13 @@ parser.add_argument('--excel', action='store_true',
                     help='get excel from stdin')
 parser.add_argument('cmd', action='store', nargs='?',
                     help='command to exec')
+parser.add_argument("-v", "--verbose", action="count", default=0,
+                    help="increases log verbosity for each occurence.")
+parser.add_argument("-s", "--silent", action="count", default=0,
+                    help="decreases log verbosity for each occurence.")
 args = parser.parse_args()
+loglevel = min(max(3 - args.verbose + args.silent, 0), 5) * 10 # Between 0 and 50
+logging.basicConfig(format='%(asctime)s:%(levelname)s:%(message)s', level=loglevel)
 
 func = []
 for mf in args.func:
@@ -67,10 +76,14 @@ if args.sql:
     df = pd.io.sql.read_frame(sys.stdin.read(), con)
     con.close()
 elif args.excel:
-    paths = sys.stdin.read().split('\n')
+    paths = sys.stdin.read().strip().split('\n')
+    logging.debug('excel paths: %r', paths)
     dflist = []
+    orig_fh = sys.stdout
+    sys.stdout = sys.stderr
     for p in paths:
         dflist.append(pd.read_excel(p, 0))
+    sys.stdout = orig_fh
     df = pd.concat(dflist, keys=[os.path.basename(p).lower() for p in paths])
 else:
     read_opts = dict(
