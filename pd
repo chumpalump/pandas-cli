@@ -1,0 +1,126 @@
+#!/usr/bin/env python
+import os, re, string, sys
+from datetime import datetime
+import numpy as np
+import pandas as pd
+import argparse
+
+parser = argparse.ArgumentParser()
+parser.add_argument('-c', '--columns', action='store', default=None,
+                    help='comma-delimited column names to output')
+parser.add_argument('-e', '--eval', action='append', default=[],
+                    help='py code to apply to dataframe')
+parser.add_argument('-p', '--predicate', action='append', default=[],
+                    help='predicate (filter) to apply to dataframe')
+parser.add_argument('-q', '--query', action='store', default=[],
+                    help='query to apply to dataframe')
+parser.add_argument('--sep', action='store', default=',',
+                    help='csv separator')
+parser.add_argument('--out-sep', action='store', default='',
+                    help='output separator (overrides --sep for output)')
+parser.add_argument('-f', '--func', action='append', default=[],
+                    help='function to apply to dataframe')
+parser.add_argument('--csv', action='append', default=[],
+                    help='extra dataframes to load from csv')
+parser.add_argument('-n', '--no-header', action='store_true',
+                    help='suppress header line with field names')
+parser.add_argument('--sql', action='store_true',
+                    help='get sql from stdin and pull from database')
+parser.add_argument('--excel', action='store_true',
+                    help='get excel from stdin')
+parser.add_argument('cmd', action='store', nargs='?',
+                    help='command to exec')
+args = parser.parse_args()
+
+func = []
+for mf in args.func:
+    mfparts = mf.strip().split('.')
+    m, f_all = mfparts[:-1], mfparts[-1]
+    fparts = f_all.split('(')
+    f, raw_functor_args = fparts[0], '('.join(fparts[1:])
+    if raw_functor_args:
+        try:
+            a = raw_functor_args[:-1]
+            if a:
+                functor_args = eval(a)
+            else:
+                functor_args = None
+        except:
+            raise Exception('ERROR: could not parse functor "%s"' % mf)
+    module_name = '.'.join(m)
+    function_name = f
+    mod = __import__(module_name)
+    newfunc = getattr(mod, function_name)
+    if raw_functor_args:
+        if functor_args:
+            func.append(newfunc(functor_args))
+        else:
+            func.append(newfunc())
+    else:
+        func.append(newfunc)
+clean_str = lambda s: str(s).strip()
+force_str = {i:clean_str for i in range(1000)}
+
+if args.sql:
+    import psycopg2
+    con = psycopg2.connect('')
+    df = pd.io.sql.read_frame(sys.stdin.read(), con)
+    con.close()
+elif args.excel:
+    paths = sys.stdin.read().split('\n')
+    dflist = []
+    for p in paths:
+        dflist.append(pd.read_excel(p, 0))
+    df = pd.concat(dflist, keys=[os.path.basename(p).lower() for p in paths])
+else:
+    read_opts = dict(
+        sep = args.sep,
+        converters = force_str,
+    )
+    df = pd.read_csv(sys.stdin, **read_opts)
+
+xf = []
+for fname in args.csv:
+    opts = {}
+    if fname.endswith('.gz'):
+        opts['compression'] = 'gzip'
+    with open(fname) as fin:
+        xf.append(pd.read_csv(fin, converters=force_str, **opts))
+
+for f in func:
+    df = f(df)
+
+for p in args.predicate:
+    df = pd.DataFrame(df.ix[eval(p)])
+
+if args.query:
+    df = df.query(args.query)
+
+for pycode in args.eval:
+    df = eval(pycode)
+
+if args.cmd:
+    exec(args.cmd)
+
+if args.columns:
+    raw_cols = args.columns.split(',')
+    try:
+        # See if the columns were listed as integers
+        # This allows -c '0,-1' to reference the first (0), and last (-1) columns
+        cols = [int(c) for c in raw_cols]
+    except:
+        # Use the string names
+        cols = raw_cols
+    df = df[cols]
+
+try:
+    write_opts = dict(
+        index = False,
+        header = not args.no_header,
+        sep = args.out_sep or args.sep,
+    )
+    df.to_csv(sys.stdout, **write_opts)
+except IOError as x:
+    # IOError: [Errno 32] Broken pipe
+    if x.errno != 32:
+        raise
