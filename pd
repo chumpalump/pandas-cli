@@ -27,6 +27,8 @@ parser.add_argument('--csv', action='append', default=[],
                     help='extra dataframes to load from csv')
 parser.add_argument('-n', '--no-header', action='store_true',
                     help='suppress header line with field names')
+parser.add_argument('-l', '--lowercase-header', action='store_true',
+                    help='lowercase field names in header line')
 parser.add_argument('--sql', action='store_true',
                     help='get sql from stdin and pull from database')
 parser.add_argument('--excel', action='store_true',
@@ -91,6 +93,11 @@ else:
         converters = force_str,
     )
     df = pd.read_csv(sys.stdin, **read_opts)
+
+if args.lowercase_header:
+    df.rename(columns=dict(
+        (c, c.lower()) for c in df.columns),
+        inplace=True)
 
 xf = []
 for fname in args.csv:
