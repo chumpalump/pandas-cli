@@ -1,4 +1,7 @@
 #!/usr/bin/env python
+from __future__ import (absolute_import, division,
+                        print_function, unicode_literals)
+from future.builtins import *
 import os, re, string, sys
 from datetime import datetime
 import numpy as np
@@ -28,7 +31,9 @@ parser.add_argument('--csv', action='append', default=[],
 parser.add_argument('-n', '--no-header', action='store_true',
                     help='suppress header line with field names')
 parser.add_argument('-l', '--lowercase-header', action='store_true',
-                    help='lowercase field names in header line')
+                    help='lowercase field names in header line.  Also switches spaces to underscores.')
+parser.add_argument('-r', '--rename', action='append', default=[],
+                    help='rename column using oldname,newname')
 parser.add_argument('--sql', action='store_true',
                     help='get sql from stdin and pull from database')
 parser.add_argument('--excel', action='store_true',
@@ -96,8 +101,12 @@ else:
 
 if args.lowercase_header:
     df.rename(columns=dict(
-        (c, c.lower()) for c in df.columns),
+        (c, c.lower().replace(' ','_')) for c in df.columns),
         inplace=True)
+
+for oldnew in args.rename:
+    oldcol, newcol = oldnew.split(',')
+    df.rename(columns={oldcol:newcol}, inplace=True)
 
 xf = []
 for fname in args.csv:
