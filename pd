@@ -48,6 +48,14 @@ parser.add_argument("-s", "--silent", action="count", default=0,
                     help="decreases log verbosity for each occurence.")
 parser.add_argument('--show-index', action='store_true',
                     help='include index in output')
+parser.add_argument('--join', action='append', default=[],
+                    help=('join dataframe to another dataframe.  Format is:\n'
+                          ' csvfilename,fieldname,how'
+                          ' If fieldname is missing, use natural join.'
+                          ' If how is missing, use left join.'))
+parser.add_argument('--fill-blank', action='append', default=[],
+                    help=('Fill blank and None values with new value. Format is:\n'
+                          ' fieldname,somevalue'))
 args = parser.parse_args()
 loglevel = min(max(3 - args.verbose + args.silent, 0), 5) * 10 # Between 0 and 50
 logging.basicConfig(format='%(asctime)s:%(levelname)s:%(message)s', level=loglevel)
@@ -119,13 +127,34 @@ for oldnew in args.rename:
     oldcol, newcol = oldnew.split(',')
     df.rename(columns={oldcol:newcol}, inplace=True)
 
-xf = []
-for fname in args.csv:
+def load_df(fname):
     opts = {}
     if fname.endswith('.gz'):
         opts['compression'] = 'gzip'
     with open(fname) as fin:
-        xf.append(pd.read_csv(fin, converters=force_str, **opts))
+        return pd.read_csv(fin, converters=force_str, **opts)
+
+for j in args.join:
+    jj = j.split(',')
+    jfile = jj[0]
+    try:
+        jfield = jj[1] or None
+    except IndexError:
+        jfield = None
+    try:
+        jhow = jj[2]
+    except IndexError:
+        jhow = 'left'
+    jdf = load_df(jfile)
+    df = pd.merge(df, jdf, on=jfield, how=jhow)
+
+for b in args.fill_blank:
+    bfield, bvalue = b.split(',')
+    df[bfield] = df[bfield].fillna(bvalue)
+
+xf = []
+for fname in args.csv:
+    xf.append(load_df(fname))
 
 for f in func:
     df = f(df)
