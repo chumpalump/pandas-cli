@@ -146,7 +146,7 @@ for j in args.join:
     except IndexError:
         jhow = 'left'
     jdf = load_df(jfile)
-    df = pd.merge(df, jdf, on=jfield, how=jhow)
+    df = pd.merge(df, jdf, on=jfield, how=jhow, suffixes=['','_new'])
 
 for b in args.fill_blank:
     bfield, bvalue = b.split(',')
