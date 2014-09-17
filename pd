@@ -14,6 +14,11 @@ warnings.simplefilter(action = "ignore")
 parser = argparse.ArgumentParser()
 parser.add_argument('-c', '--columns', action='store', default=None,
                     help='comma-delimited column names to output')
+parser.add_argument('-C', '--counts', action='store', default=None,
+                    help='comma-delimited column names to output as value counts')
+parser.add_argument('-X', '--crosstab', action='store', default=None,
+                    help=('field names as rows: field names as columns\nuse comma-delimited names\nexample: c1,c2:c4,c5')
+                    )
 parser.add_argument('-e', '--eval', action='append', default=[],
                     help='py code to apply to dataframe')
 parser.add_argument('-p', '--predicate', action='append', default=[],
@@ -48,9 +53,11 @@ parser.add_argument("-s", "--silent", action="count", default=0,
                     help="decreases log verbosity for each occurence.")
 parser.add_argument('--show-index', action='store_true',
                     help='include index in output')
+parser.add_argument('-T','--transpose', action='store_true',
+                    help='transpose output and include index')
 parser.add_argument('--join', action='append', default=[],
                     help=('join dataframe to another dataframe.  Format is:\n'
-                          ' csvfilename,fieldname,how'
+                          ' csvfilename,how,fieldname'
                           ' If fieldname is missing, use natural join.'
                           ' If how is missing, use left join.'))
 parser.add_argument('--fill-blank', action='append', default=[],
@@ -138,13 +145,13 @@ for j in args.join:
     jj = j.split(',')
     jfile = jj[0]
     try:
-        jfield = jj[1] or None
-    except IndexError:
-        jfield = None
-    try:
-        jhow = jj[2]
+        jhow = jj[1]
     except IndexError:
         jhow = 'left'
+    try:
+        jfield = jj[2] or None
+    except IndexError:
+        jfield = None
     jdf = load_df(jfile)
     df = pd.merge(df, jdf, on=jfield, how=jhow, suffixes=['','_new'])
 
@@ -171,8 +178,45 @@ for pycode in args.eval:
 if args.cmd:
     exec(args.cmd)
 
+if args.counts:
+    raw_cols = [c.strip() for c in args.counts.split(',')]
+    try:
+        # See if the columns were listed as integers
+        # This allows -c '0,-1' to reference the first (0), and last (-1) columns
+        cols = [int(c) for c in raw_cols]
+    except:
+        # Use the string names
+        cols = raw_cols
+    df = df.groupby(cols).size().reset_index()
+    df.rename(columns={0:'count'}, inplace=True)
+
+if args.crosstab:
+    rr, cc = args.crosstab.split(':')
+    raw_rows = [r.strip() for r in rr.split(',')]
+    raw_cols = [c.strip() for c in cc.split(',')]
+    try:
+        # See if the columns were listed as integers
+        # This allows -c '0,-1' to reference the first (0), and last (-1) columns
+        cols = [int(c) for c in raw_cols]
+    except:
+        # Use the string names
+        cols = raw_cols
+    try:
+        # See if the columns were listed as integers
+        # This allows -c '0,-1' to reference the first (0), and last (-1) columns
+        rows = [int(r) for r in raw_rows]
+    except:
+        # Use the string names
+        rows = raw_rows
+        #nrow = [i for i,v in enumerate(rows)]
+    rlist = [df[r] for r in rows]
+    clist = [df[c] for c in cols]
+    df = pd.crosstab(rlist, clist, dropna=False, margins=True)
+    df.index.name = args.crosstab
+    df = df.reset_index()
+
 if args.columns:
-    raw_cols = args.columns.split(',')
+    raw_cols = [c.strip() for c in args.columns.split(',')]
     try:
         # See if the columns were listed as integers
         # This allows -c '0,-1' to reference the first (0), and last (-1) columns
@@ -182,8 +226,12 @@ if args.columns:
         cols = raw_cols
     df = df[cols]
 
+if args.transpose:
+    df = df.T
+    args.show_index = True
 try:
-    df.index.name = 'index'
+    if not df.index.name:
+        df.index.name = 'index'
     write_opts = dict(
         index = args.show_index,
         header = not args.no_header,
