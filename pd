@@ -12,6 +12,10 @@ import logging
 warnings.simplefilter(action = "ignore")
 
 parser = argparse.ArgumentParser()
+parser.add_argument('--prefix', action='store', default=None,
+                    help='prefix all columns names\nFor example: --prefix set1_')
+parser.add_argument('--suffix', action='store', default=None,
+                    help='sufix all columns names\nFor example: --suffix _set1')
 parser.add_argument('-c', '--columns', action='store', default=None,
                     help='comma-delimited column names to output')
 parser.add_argument('-C', '--counts', action='store', default=None,
@@ -51,10 +55,12 @@ parser.add_argument("-v", "--verbose", action="count", default=0,
                     help="increases log verbosity for each occurence.")
 parser.add_argument("-s", "--silent", action="count", default=0,
                     help="decreases log verbosity for each occurence.")
-parser.add_argument('--show-index', action='store_true',
+parser.add_argument('-i', '--show-index', action='store_true',
                     help='include index in output')
 parser.add_argument('-T','--transpose', action='store_true',
                     help='transpose output and include index')
+parser.add_argument('-t','--table', action='store_true',
+                    help='ascii table output in markdown pipe-style')
 parser.add_argument('--join', action='append', default=[],
                     help=('join dataframe to another dataframe.  Format is:\n'
                           ' csvfilename,how,fieldname'
@@ -62,7 +68,10 @@ parser.add_argument('--join', action='append', default=[],
                           ' If how is missing, use left join.'))
 parser.add_argument('--fill-blank', action='append', default=[],
                     help=('Fill blank and None values with new value. Format is:\n'
-                          ' fieldname,somevalue'))
+                          ' columnname,somevalue'))
+parser.add_argument('--fill', action='append', default=[],
+                    help=('Fill column with given value. Create column if not present.\n'
+                          'Format is: columnname,somevalue'))
 args = parser.parse_args()
 loglevel = min(max(3 - args.verbose + args.silent, 0), 5) * 10 # Between 0 and 50
 logging.basicConfig(format='%(asctime)s:%(levelname)s:%(message)s', level=loglevel)
@@ -106,7 +115,15 @@ if args.sql:
         logging.info('Database argument not found, assuming PostgreSQL')
         import psycopg2
         con = psycopg2.connect('')
-    df = pd.io.sql.read_frame(sys.stdin.read(), con)
+    #df = pd.io.sql.read_frame(sys.stdin.read(), con)
+    df = pd.read_sql(sys.stdin.read(), con, coerce_float=False)
+    #idcols = [c for c in df.columns if c == 'id' or c.endswith('_id')]
+    #logging.error(idcols)
+    # for c in idcols:
+    #     df[c] = df[c].astype(str)
+    #     df[c] = df[c].replace('\.0$', '', regex=True)
+    #     logging.error(c)
+    #logging.error(df)
     con.close()
 elif args.excel:
     paths = sys.stdin.read().strip().split('\n')
@@ -130,6 +147,14 @@ if args.lowercase_header:
         (c, c.lower().replace(' ','_')) for c in df.columns),
         inplace=True)
 
+if args.prefix:
+    for c in df.columns:
+        df.rename(columns={c:args.prefix+c}, inplace=True)
+
+if args.suffix:
+    for c in df.columns:
+        df.rename(columns={c:c+args.suffix}, inplace=True)
+
 for oldnew in args.rename:
     oldcol, newcol = oldnew.split(',')
     df.rename(columns={oldcol:newcol}, inplace=True)
@@ -152,12 +177,23 @@ for j in args.join:
         jfield = jj[2] or None
     except IndexError:
         jfield = None
+    try:
+        jfield2 = jj[3] or None
+    except IndexError:
+        jfield2 = None
     jdf = load_df(jfile)
-    df = pd.merge(df, jdf, on=jfield, how=jhow, suffixes=['','_new'])
+    if jfield2:
+        df = pd.merge(df, jdf, on=[jfield,jfield2], how=jhow, suffixes=['','_new'])
+    else:
+        df = pd.merge(df, jdf, on=jfield, how=jhow, suffixes=['','_new'])
 
 for b in args.fill_blank:
     bfield, bvalue = b.split(',')
     df[bfield] = df[bfield].fillna(bvalue)
+
+for b in args.fill:
+    bfield, bvalue = b.split(',')
+    df[bfield] = bvalue
 
 xf = []
 for fname in args.csv:
@@ -215,6 +251,9 @@ if args.crosstab:
     df.index.name = args.crosstab
     df = df.reset_index()
 
+if type(df) == type(pd.Series()):
+    df = pd.DataFrame(df)
+
 if args.columns:
     raw_cols = [c.strip() for c in args.columns.split(',')]
     try:
@@ -229,9 +268,26 @@ if args.columns:
 if args.transpose:
     df = df.T
     args.show_index = True
+
+if not df.index.name:
+    df.index.name = 'index'
+
+if args.table:
+    from tabulate import tabulate
+    if args.no_header:
+        cols = None
+    else:
+        cols = [c for c in df.columns]
+    rs = df.to_records(index=args.show_index)
+    rsout = tabulate(rs, cols, tablefmt="pipe")
+    try:
+        print(rsout)
+    except IOError as x:
+        # IOError: [Errno 32] Broken pipe
+        if x.errno != 32:
+            raise
+    sys.exit(0)
 try:
-    if not df.index.name:
-        df.index.name = 'index'
     write_opts = dict(
         index = args.show_index,
         header = not args.no_header,
