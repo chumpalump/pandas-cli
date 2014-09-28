@@ -43,6 +43,8 @@ parser.add_argument('-l', '--lowercase-header', action='store_true',
                     help='lowercase field names in header line.  Also switches spaces to underscores.')
 parser.add_argument('-r', '--rename', action='append', default=[],
                     help='rename column using oldname,newname')
+parser.add_argument('-a', '--astype', action='append', default=[],
+                    help='set column as type: colname,type\nexample: -a expense,float')
 parser.add_argument('--sql', action='store_true',
                     help='get sql from stdin and pull from database')
 parser.add_argument('--pg', action='store', default=None,
@@ -158,6 +160,10 @@ if args.suffix:
 for oldnew in args.rename:
     oldcol, newcol = oldnew.split(',')
     df.rename(columns={oldcol:newcol}, inplace=True)
+
+for coltype in args.astype:
+    colname, newtype = coltype.split(',')
+    df[colname] = df[colname].astype(newtype)
 
 def load_df(fname):
     opts = {}
