@@ -23,6 +23,9 @@ parser.add_argument('-C', '--counts', action='store', default=None,
 parser.add_argument('-X', '--crosstab', action='store', default=None,
                     help=('field names as rows: field names as columns\nuse comma-delimited names\nexample: c1,c2:c4,c5')
                     )
+parser.add_argument('-P', '--pivot', action='store', default=None,
+                    help=('field names as rows:columns:values\nuse comma-delimited names\nexample: c1,c2:c4:c5')
+                    )
 parser.add_argument('-e', '--eval', action='append', default=[],
                     help='py code to apply to dataframe')
 parser.add_argument('-p', '--predicate', action='append', default=[],
@@ -49,6 +52,8 @@ parser.add_argument('--sql', action='store_true',
                     help='get sql from stdin and pull from database')
 parser.add_argument('--pg', action='store', default=None,
                     help='dsn for postgresql connection.  Use empty string to pull from environment')
+parser.add_argument('--mysql', action='store', default=None,
+                    help='dsn for mysql connection.  Use empty string to pull from environment')
 parser.add_argument('--excel', action='store_true',
                     help='get excel from stdin')
 parser.add_argument('cmd', action='store', nargs='?',
@@ -107,6 +112,18 @@ for mf in args.func:
 clean_str = lambda s: str(s).strip()
 force_str = {i:clean_str for i in range(1000)}
 con = None
+
+if args.mysql is not None:
+    import MySQLdb
+    dsnp = [a.split('=') for a in args.mysql.split()]
+    dsn = {}
+    for k, v in dsnp:
+        if k == 'dbname':  # Allow postgresql-style dsn keys for mysql
+            k = 'db'
+        if k == 'port':
+           v = int(v)
+        dsn[k] = v
+    con = MySQLdb.connect(**dsn)
 
 if args.pg is not None:
     import psycopg2
@@ -256,6 +273,36 @@ if args.crosstab:
     df = pd.crosstab(rlist, clist, dropna=False, margins=True)
     df.index.name = args.crosstab
     df = df.reset_index()
+
+if args.pivot:
+    rr, cc, vv = args.pivot.split(':')
+    raw_rows = [r.strip() for r in rr.split(',')]
+    raw_cols = [c.strip() for c in cc.split(',')]
+    raw_vals = [c.strip() for c in vv.split(',')]
+    try:
+        # See if the columns were listed as integers
+        cols = [int(c) for c in raw_cols]
+    except:
+        # Use the string names
+        cols = raw_cols
+    try:
+        # See if the columns were listed as integers
+        rows = [int(r) for r in raw_rows]
+    except:
+        # Use the string names
+        rows = raw_rows
+        #nrow = [i for i,v in enumerate(rows)]
+    try:
+        # See if the value columns were listed as integers
+        vals = [int(r) for r in raw_rows]
+    except:
+        # Use the string names
+        vals = raw_vals
+
+    df = pd.pivot_table(df, rows=rows, cols=cols, values=vals, aggfunc=np.sum, dropna=False)
+    df = df.reset_index()
+    # unpack column names: (cols_name, cols_value) => cols_value
+    df.columns = ["_".join(rows)] + [c[-1] for c in df.columns[1:]]
 
 if type(df) == type(pd.Series()):
     df = pd.DataFrame(df)
